@@ -1,3 +1,12 @@
+from fastapi import FastAPI, HTTPException
+from azure.storage.blob import BlobServiceClient
+from datetime import datetime
+from dotenv import load_dotenv
+import requests
+import os
+import io
+
+
 import pandas as pd
 import numpy as np
 import re
@@ -5,6 +14,14 @@ import uuid
 from thefuzz import fuzz 
 import datetime
 import itertools
+
+# === FastAPI Setup ===
+app = FastAPI()
+load_dotenv()
+
+CONNSTRING = os.getenv('CONNSTRING')
+OUTPUTCON = os.getenv('OUTPUTCON')
+INPUTCON = os.getenv('INPUTCON')
 
 class LedgerSettlement:
     def __init__(self, days, atol, highest_score, accounts): 
@@ -158,39 +175,68 @@ class LedgerSettlement:
             })
 
     def write_results(self, file):
-        pd.DataFrame(self.results).to_csv(file, index=False)
+        matched_df = pd.DataFrame(self.results)
+        matched_df.to_csv(file, index=False)
+        output = io.StringIO()
+        output = matched_df.to_csv (index_label="idx", encoding = "utf-8")
+        print('Matching complete. Results saved to matched_transactions.csv')
 
+        blob_service = BlobServiceClient.from_connection_string(CONNSTRING)
 
+        container_client = blob_service.get_container_client(OUTPUTCON)
 
-# --- Runner code with execution tracking ---
+        my_string = "matched_transactions.csv"
 
-accounts = ['336413--812803-National-CRP--']
+        # Format the datetime object into a string
+        # Example format: "YYYY-MM-DD HH:MM:SS"
+        current_datetime = datetime.now()
+        formatted_datetime_string = current_datetime.strftime("%Y-%m-%d %H:%M:%S")
 
-exec_start = datetime.datetime.now()
+        # Combine the string and the formatted datetime string
+        combined_string = f"{formatted_datetime_string} {my_string}"
 
-settle = LedgerSettlement(27, 0.001, 90, accounts)
+        blob_client = blob_service.get_blob_client(container=OUTPUTCON, 
+        blob=combined_string)
 
-print("Starting file load...")
-exec_fileload_start = datetime.datetime.now()
-settle.load_ledger('LTData_small.csv')
-exec_fileload_end = datetime.datetime.now()
-print("File load complete.") 
+        blob_client.upload_blob(output,overwrite=True)
 
-print("Starting settlement...")
-exec_settlement_start = datetime.datetime.now()
-settle.settle()
-settle.write_unmatched()
-exec_settlement_end = datetime.datetime.now()
-print("Settlement complete.")
+        #blobService = BlockBlobService(account_name=accountName, account_key=accountKey)
+        #blobService.create_blob_from_text('output', 'matched_transactions.csv', output)
 
-print("Starting file write...")
-exec_filewrite_start = datetime.datetime.now()
-settle.write_results('matched_transactions.csv')
-exec_end = datetime.datetime.now()
-print("File write complete.")
+def executeFromBlob(self):
+        CONNECTION_STRING = CONNSTRING
+        CONTAINER_NAME = INPUTCON
+        FOLDER_PREFIX = "data/" # e.g., "data/csv_files/"
 
-print("")
-print(f"File load execution time: {(exec_fileload_end - exec_fileload_start).total_seconds()} seconds")
-print(f"Settlement execution time: {(exec_settlement_end - exec_settlement_start).total_seconds()} seconds")
-print(f"File write execution time: {(exec_end - exec_filewrite_start).total_seconds()} seconds")
-print(f"Total execution time: {(exec_end - exec_start).total_seconds()} seconds")
+        blob_service_client = BlobServiceClient.from_connection_string(CONNECTION_STRING)
+        container_client = blob_service_client.get_container_client(CONTAINER_NAME)
+
+        dataframes = {} # Dictionary to store DataFrames, keyed by blob name
+
+        # List blobs within the specified folder prefix
+        for blob in container_client.list_blobs(name_starts_with=FOLDER_PREFIX):
+            if blob.name.endswith(".csv"):
+                print(f"Processing: {blob.name}")
+
+                # Download blob content to a stream
+                download_stream = container_client.get_blob_client(blob.name).download_blob()
+                
+                # Read content into a BytesIO object
+                csv_data = io.BytesIO()
+                download_stream.readinto(csv_data)
+                csv_data.seek(0) # Reset stream position to the beginning
+                
+                accounts = ['336413']
+
+                settle = LedgerSettlement(3, 0.001, 90, accounts)
+                settle.load_ledger(csv_data)
+                settle.settle_ledger()
+                settle.write_unsettled()
+                settle.write_results('matched_transactions.csv')
+
+                container_client.delete_blob(blob.name);
+ 
+
+#  --- Runner code with execution tracking ---
+#accounts = ['336413--812803-National-CRP--']
+#settle = LedgerSettlement(27, 0.001, 90, accounts)
