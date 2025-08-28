@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 import re
 import uuid
-from thefuzz import thefuzz 
+from thefuzz import fuzz 
 import datetime
 import itertools
 
